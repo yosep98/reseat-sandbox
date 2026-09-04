@@ -1,0 +1,85 @@
+# Elasticsearch(nori) — StatefulSet + PVC(local-path). medium 노드 전용.
+# ghcr-pull-secret: kubectl create secret docker-registry ghcr-pull-secret --docker-server=ghcr.io \
+#   --docker-username=<github-username> --docker-password='<GHCR PAT>' -n reseat
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: reseat
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      nodeSelector:
+        role: db
+      tolerations:
+        - key: role
+          operator: Equal
+          value: db
+          effect: NoSchedule
+      containers:
+        - name: elasticsearch
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/elasticsearch-nori:latest
+          env:
+            - name: TZ
+              value: Asia/Seoul
+            - name: discovery.type
+              value: single-node
+            - name: xpack.security.enabled
+              value: "false"
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+          ports:
+            - containerPort: 9200
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 45
+            periodSeconds: 15
+          volumeMounts:
+            - name: es-data
+              mountPath: /usr/share/elasticsearch/data
+  volumeClaimTemplates:
+    - metadata:
+        name: es-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: reseat
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+    - port: 9200
+      targetPort: 9200

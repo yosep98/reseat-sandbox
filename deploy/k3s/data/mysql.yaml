@@ -1,0 +1,98 @@
+# MySQL — StatefulSet + PVC(local-path). medium 노드(taint: role=db)에만 스케줄됨.
+#
+# 적용 전 필요한 것:
+#   1) Secret (git에 올리지 않음, 직접 생성):
+#      kubectl create secret generic mysql-secret \
+#        --from-literal=root-password='<실제 비밀번호>' -n reseat
+#   2) ConfigMap (init-databases.sql, 최초 기동시에만 실행됨 — PVC가 비어있을 때만 적용됨에 주의):
+#      kubectl create configmap mysql-init \
+#        --from-file=init-databases.sql=init-databases.sql -n reseat
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: reseat
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      nodeSelector:
+        role: db
+      tolerations:
+        - key: role
+          operator: Equal
+          value: db
+          effect: NoSchedule
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          args:
+            - --default-time-zone=+09:00
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_0900_ai_ci
+            - --init-connect=SET NAMES utf8mb4
+          env:
+            - name: TZ
+              value: Asia/Seoul
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: root-password
+          ports:
+            - containerPort: 3306
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 1750Mi
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\" --silent"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\" --silent"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+            - name: mysql-init
+              mountPath: /docker-entrypoint-initdb.d/init-databases.sql
+              subPath: init-databases.sql
+      volumes:
+        - name: mysql-init
+          configMap:
+            name: mysql-init
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: reseat
+spec:
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
