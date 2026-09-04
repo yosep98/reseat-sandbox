@@ -1,0 +1,7 @@
+# K3s 실습용 네임스페이스. 서비스 개수가 적어서 도메인/서비스별로 나누지 않고 하나로 시작
+# (서비스별 분리는 네임스페이스가 아니라 Deployment/StatefulSet 단위로 함 — 아래 app/, data/ 참고)
+# 근거: Dev/K3s/K3s-도입-아키텍처.md "주요 설계 결정 및 이유"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: reseat
