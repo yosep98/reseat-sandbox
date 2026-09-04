@@ -1,0 +1,80 @@
+# gateway-service — 상태 없는 서비스부터. large 노드(기본 스케줄, nodeSelector 없음 — medium은 taint라 여기 못 뜸).
+# 필요한 Secret (git에 값 안 올림, 직접 생성):
+#   kubectl create secret generic jwt-secret --from-literal=JWT_SECRET='<값>' -n reseat
+#   (user/order/performance-service도 이 시크릿을 같이 참조함 — JWT 서명/검증 키라 반드시 동일해야 함)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: reseat
+data:
+  USER_SERVICE_URL: http://user-service:8081
+  ORDER_SERVICE_URL: http://order-service:8082
+  PERFORMANCE_SERVICE_URL: http://performance-service:8083
+  # Step 5(Ingress/도메인 붙일 때)에서 실제 origin으로 교체 필요
+  CORS_ALLOWED_ORIGINS: "http://localhost:3000"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-service
+  namespace: reseat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-service
+  template:
+    metadata:
+      labels:
+        app: gateway-service
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: gateway-service
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/gateway-service:v1.1.0
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: gateway-config
+          env:
+            - name: TZ
+              value: Asia/Seoul
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: JWT_SECRET
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+  namespace: reseat
+spec:
+  selector:
+    app: gateway-service
+  ports:
+    - port: 8080
+      targetPort: 8080
