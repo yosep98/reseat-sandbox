@@ -3,13 +3,17 @@ package com.programmers.kdt.config;
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.uri;
 import static org.springframework.cloud.gateway.server.mvc.handler.GatewayRouterFunctions.route;
 import static org.springframework.cloud.gateway.server.mvc.handler.HandlerFunctions.http;
+import static org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequestPredicates.method;
 import static org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequestPredicates.path;
 
 import com.programmers.kdt.common.jwt.JwtProvider;
 import com.programmers.kdt.filter.JwtAuthFilterFunction;
+import com.programmers.kdt.filter.UserRateLimitFilterFunction;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpMethod;
 import org.springframework.web.servlet.function.RequestPredicate;
 import org.springframework.web.servlet.function.RouterFunction;
 import org.springframework.web.servlet.function.ServerResponse;
@@ -30,9 +34,17 @@ public class GatewayRouteConfig {
     @Value("${performance-service.url}")
     private String performanceServiceUrl;
 
+    @Value("${rate-limit.standby.window-seconds}")
+    private int standbyRateLimitWindowSeconds;
+
+    @Value("${rate-limit.standby.max-requests}")
+    private int standbyRateLimitMaxRequests;
+
     @Bean
-    public RouterFunction<ServerResponse> gatewayRoutes(JwtProvider jwtProvider) {
+    public RouterFunction<ServerResponse> gatewayRoutes(JwtProvider jwtProvider, StringRedisTemplate redisTemplate) {
         JwtAuthFilterFunction jwtAuthFilterFunction = new JwtAuthFilterFunction(jwtProvider);
+        UserRateLimitFilterFunction standbyRateLimitFilterFunction = new UserRateLimitFilterFunction(
+                redisTemplate, "ratelimit:standby:user:", standbyRateLimitWindowSeconds, standbyRateLimitMaxRequests);
 
         RequestPredicate orderServicePaths = path("/api/order/**")
                 .or(path("/api/payments/**"))
@@ -49,11 +61,22 @@ public class GatewayRouteConfig {
                 .or(path("/api/images/**"))
                 ;
 
-        return route("user-service")
+        // 대기열(standby) 신청/취소 - 유저 단위 2차 rate limit 대상 (매크로로 순번을 싹쓸이하는 패턴 방지).
+        // 조회(GET)는 대상이 아니므로, 아래 performanceServicePaths보다 먼저 매칭시켜 분리한다.
+        RequestPredicate standbyMutationPaths = path("/api/standby").and(method(HttpMethod.POST))
+                .or(path("/api/standby/**").and(method(HttpMethod.DELETE)));
+
+        return route("performance-service-standby-mutation")
+                .route(standbyMutationPaths, http())
+                .before(uri(performanceServiceUrl))
+                .filter(jwtAuthFilterFunction)
+                .filter(standbyRateLimitFilterFunction)
+                .build()
+            .and(route("user-service")
                 .route(path("/api/users/**"), http())
                 .before(uri(userServiceUrl))
                 .filter(jwtAuthFilterFunction)
-                .build()
+                .build())
             .and(route("order-service")
                 .route(orderServicePaths, http())
                 .before(uri(orderServiceUrl))

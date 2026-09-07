@@ -13,6 +13,9 @@ data:
   PERFORMANCE_SERVICE_URL: http://performance-service:8083
   # Step 5(Ingress/도메인 붙일 때)에서 실제 origin으로 교체 필요
   CORS_ALLOWED_ORIGINS: "http://localhost:3000"
+  # Step 6: 2차 rate limit(유저 단위, standby 매크로 방지) 카운터 저장소 - medium 노드의 공용 redis 재사용
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_DATA_REDIS_PORT: "6379"
 ---
 apiVersion: apps/v1
 kind: Deployment
