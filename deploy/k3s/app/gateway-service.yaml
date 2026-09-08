@@ -51,8 +51,10 @@ spec:
                   name: jwt-secret
                   key: JWT_SECRET
           resources:
+            # CPU request는 실사용량(top pods 기준 ~3m) 대비 요청값이 83배 컸음 - 실사용량 대비
+            # 여유를 넉넉히 둔 100m으로 재조정(2026-09-08). limit은 순간 버스트 대비 그대로 유지.
             requests:
-              cpu: 250m
+              cpu: 100m
               memory: 256Mi
             limits:
               cpu: 500m

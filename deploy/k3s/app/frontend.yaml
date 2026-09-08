@@ -21,8 +21,10 @@ spec:
           ports:
             - containerPort: 3000
           resources:
+            # CPU request는 실사용량(top pods 기준 ~1m) 대비 요청값이 200배 컸음 - 실사용량 대비
+            # 여유를 넉넉히 둔 100m으로 재조정(2026-09-08). limit은 순간 버스트 대비 그대로 유지.
             requests:
-              cpu: 200m
+              cpu: 100m
               memory: 256Mi
             limits:
               cpu: 400m
