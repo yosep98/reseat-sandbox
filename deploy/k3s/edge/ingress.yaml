@@ -77,7 +77,16 @@ spec:
                 name: gateway-service
                 port:
                   number: 8080
-          # 그 외 전부 프론트(Next.js SSR)로 - /api/* prefix가 더 구체적이라 순서 무관
+          # 2026-09-08: 모니터링 대시보드 - Grafana 자체 로그인(admin/grafana-secret)으로만 보호됨,
+          # IP 제한 없이 전체 공개(사용자 결정). duckdns라 서브도메인 대신 경로로 노출.
+          - path: /grafana/
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+          # 그 외 전부 프론트(Next.js SSR)로 - /api/*, /grafana/* prefix가 더 구체적이라 순서 무관
           - path: /
             pathType: Prefix
             backend:

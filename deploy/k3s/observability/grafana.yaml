@@ -7,6 +7,25 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: grafana-dashboards-provider
+  namespace: reseat
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: true
+        options:
+          path: /etc/grafana/provisioning/dashboards/files
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: grafana-datasources
   namespace: reseat
 data:
@@ -91,6 +110,13 @@ spec:
                   key: GF_SECURITY_ADMIN_PASSWORD
             - name: GF_AUTH_ANONYMOUS_ENABLED
               value: "false"
+            # 2026-09-08: reseat.duckdns.org/grafana/ 서브패스로 Ingress에 붙임(duckdns는
+            # 서브도메인 추가가 안 돼서 경로 기반으로 노출) - 이 두 값 없이 서브패스로 접근하면
+            # 정적 리소스(JS/CSS) 경로가 깨짐.
+            - name: GF_SERVER_ROOT_URL
+              value: "https://reseat.duckdns.org/grafana/"
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
           resources:
             requests:
               cpu: 50m
@@ -101,6 +127,10 @@ spec:
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboards-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboard-files
+              mountPath: /etc/grafana/provisioning/dashboards/files
             - name: data
               mountPath: /var/lib/grafana
           readinessProbe:
@@ -118,6 +148,17 @@ spec:
         - name: datasources
           configMap:
             name: grafana-datasources
+        - name: dashboards-provider
+          configMap:
+            name: grafana-dashboards-provider
+        # observability/grafana/provisioning/dashboards/files/*.json 중 범용 대시보드(JVM/HikariCP)
+        # 2개만 담은 ConfigMap - git에 JSON을 중복으로 안 넣으려고 imperatively 생성함:
+        #   kubectl create configmap grafana-dashboard-files -n reseat \
+        #     --from-file=observability/grafana/provisioning/dashboards/files/jvm-micrometer.json \
+        #     --from-file=observability/grafana/provisioning/dashboards/files/hikaricp-pool.json
+        - name: dashboard-files
+          configMap:
+            name: grafana-dashboard-files
         - name: data
           persistentVolumeClaim:
             claimName: grafana-data
