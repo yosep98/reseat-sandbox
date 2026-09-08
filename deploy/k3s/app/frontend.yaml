@@ -17,7 +17,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: frontend
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_fe/frontend:latest
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_fe/frontend:k3s-rag-ui
           ports:
             - containerPort: 3000
           resources:

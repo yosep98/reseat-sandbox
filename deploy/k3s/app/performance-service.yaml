@@ -33,7 +33,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: performance-service
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/performance-service:v1.1.0
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/performance-service:k3s-rag-recommendation
           ports:
             - containerPort: 8083
           envFrom:
@@ -62,6 +62,11 @@ spec:
                 secretKeyRef:
                   name: aws-secret
                   key: AWS_SECRET_ACCESS_KEY
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai-secret
+                  key: OPENAI_API_KEY
           resources:
             requests:
               cpu: 500m
