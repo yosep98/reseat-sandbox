@@ -10,6 +10,8 @@ data:
   SPRING_DATA_REDIS_PORT: "6379"
   SPRING_JPA_SHOW_SQL: "false"
   SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL: "false"
+  # 2026-09-08: Tempo가 observability/ 스택으로 K3s에 편입되면서 실제 수신지로 변경
+  OTLP_ENDPOINT: http://tempo:4318/v1/traces
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -30,7 +32,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: user-service
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/user-service:v1.1.0
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/user-service:k3s-tempo-otlp
           ports:
             - containerPort: 8081
           envFrom:

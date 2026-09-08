@@ -16,6 +16,8 @@ data:
   # Step 6: 2차 rate limit(유저 단위, standby 매크로 방지) 카운터 저장소 - medium 노드의 공용 redis 재사용
   SPRING_DATA_REDIS_HOST: redis
   SPRING_DATA_REDIS_PORT: "6379"
+  # 2026-09-08: Tempo가 observability/ 스택으로 K3s에 편입되면서 실제 수신지로 변경
+  OTLP_ENDPOINT: http://tempo:4318/v1/traces
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -36,7 +38,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: gateway-service
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/gateway-service:k3s-step6-ratelimit
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/gateway-service:k3s-tempo-otlp
           ports:
             - containerPort: 8080
           envFrom:
