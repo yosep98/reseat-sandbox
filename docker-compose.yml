@@ -1,0 +1,47 @@
+# 로컬 개발용 인프라 - MySQL(3306), Redis(6379), Elasticsearch(9200, nori 형태소분석기 포함).
+# 각 서비스(user/order/performance-service)의 application.properties 기본값(localhost:포트)과 그대로 맞음.
+# 실행: docker compose up -d
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: reseat-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "1234"
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p1234"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:8
+    container_name: reseat-redis
+    ports:
+      - "6379:6379"
+
+  elasticsearch:
+    build:
+      context: ./deploy/elasticsearch
+    container_name: reseat-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\"'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  mysql-data:
+  es-data:
