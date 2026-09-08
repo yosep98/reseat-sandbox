@@ -1,0 +1,107 @@
+# Promtail - DaemonSet(모든 노드에서 실행, medium의 role=db taint에도 toleration으로 뜸).
+# docker-compose 시절엔 앱이 파일(./logs/*.json)에 로그를 남기고 그 볼륨을 promtail이 tail했지만,
+# K3s에선 그런 공유 볼륨이 없어서 K8s 표준 방식(kubelet이 쓰는 /var/log/pods/**/*.log, CRI 포맷)으로
+# 컨테이너 stdout을 직접 tail하도록 바꿈 - 앱 쪽 로그 설정(CONSOLE appender)은 안 건드림.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: reseat
+data:
+  promtail-config.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+
+    positions:
+      filename: /run/promtail/positions.yaml
+
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        pipeline_stages:
+          - cri: {}
+          - regex:
+              expression: '^\S+\s+(?P<level>\w+)\s+'
+          - labels:
+              level:
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace]
+            action: keep
+            regex: reseat
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+          - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
+            separator: /
+            target_label: __path__
+            replacement: /var/log/pods/*$1/*.log
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: promtail
+  namespace: reseat
+spec:
+  selector:
+    matchLabels:
+      app: promtail
+  template:
+    metadata:
+      labels:
+        app: promtail
+    spec:
+      serviceAccountName: promtail
+      tolerations:
+        - key: role
+          operator: Equal
+          value: db
+          effect: NoSchedule
+      containers:
+        - name: promtail
+          image: grafana/promtail:2.9.8
+          args:
+            - -config.file=/etc/promtail/promtail-config.yaml
+          env:
+            # DaemonSet 파드의 기본 hostname은 파드 이름이라, Promtail이 자기 노드 파드만 보려고
+            # 자동으로 거는 spec.nodeName=<HOSTNAME> 필터가 존재하지 않는 노드명으로 걸려서
+            # target이 0개가 됨(실제로 겪은 문제) - 실제 노드 이름으로 명시적으로 덮어씀.
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: 30m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/promtail
+            - name: pods-logs
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: positions
+              mountPath: /run/promtail
+      volumes:
+        - name: config
+          configMap:
+            name: promtail-config
+        - name: pods-logs
+          hostPath:
+            path: /var/log/pods
+        - name: positions
+          emptyDir: {}

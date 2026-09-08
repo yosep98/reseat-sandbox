@@ -1,0 +1,135 @@
+# Grafana - Prometheus/Loki/Tempo 3종 데이터소스 자동 프로비저닝.
+# 지금은 Ingress에 안 붙여서 클러스터 안(ClusterIP)에서만 접근 가능 -
+# 확인하려면 `kubectl port-forward svc/grafana -n reseat 3000:3000`으로 로컬에 터널링해서 접속.
+# 필요한 Secret (git에 값 안 올림, 직접 생성):
+#   kubectl create secret generic grafana-secret --from-literal=GF_SECURITY_ADMIN_USER=admin \
+#     --from-literal=GF_SECURITY_ADMIN_PASSWORD='<값>' -n reseat
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: reseat
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus-uid
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+
+      - name: Loki
+        type: loki
+        uid: loki-uid
+        access: proxy
+        url: http://loki:3100
+        jsonData:
+          derivedFields:
+            - datasourceUid: tempo-uid
+              matcherRegex: '\[(\w{16,32}),'
+              name: TraceID
+              url: '$${__value.raw}'
+
+      - name: Tempo
+        type: tempo
+        uid: tempo-uid
+        access: proxy
+        url: http://tempo:3200
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki-uid
+            filterByTraceID: true
+          serviceMap:
+            datasourceUid: prometheus-uid
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: reseat
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: reseat
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-secret
+                  key: GF_SECURITY_ADMIN_USER
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-secret
+                  key: GF_SECURITY_ADMIN_PASSWORD
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 100Mi
+            limits:
+              cpu: 200m
+              memory: 250Mi
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: data
+              mountPath: /var/lib/grafana
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: reseat
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
