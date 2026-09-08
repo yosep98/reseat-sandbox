@@ -36,7 +36,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: gateway-service
-          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/gateway-service:v1.1.0
+          image: ghcr.io/prgrms-be-adv-devcourse/beadv7_7_overtimekk_be/gateway-service:k3s-step6-ratelimit
           ports:
             - containerPort: 8080
           envFrom:
