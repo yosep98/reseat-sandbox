@@ -8,6 +8,8 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import static org.mockito.ArgumentMatchers.eq;
+
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -18,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageConverter;
@@ -35,9 +38,13 @@ class UserRateLimitFilterFunctionTest {
             List.of(new StringHttpMessageConverter(), new JacksonJsonHttpMessageConverter());
     private static final int WINDOW_SECONDS = 10;
     private static final int MAX_REQUESTS = 5;
+    private static final int NARROWED_MAX_REQUESTS = 2;
 
     @Mock
     private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private ValueOperations<String, String> valueOperations;
 
     private UserRateLimitFilterFunction filterFunction;
 
@@ -129,6 +136,67 @@ class UserRateLimitFilterFunctionTest {
 
             assertThat(next.invoked).isTrue();
             assertThat(response.statusCode()).isEqualTo(HttpStatus.OK);
+        }
+    }
+
+    @Nested
+    @DisplayName("riskKeyPrefix가 설정돼있고(Step7) 위험 신호가 있으면")
+    class RiskAware {
+
+        @Test
+        @DisplayName("좁혀진 한도(narrowedMaxRequests)로 슬라이딩 윈도우 스크립트를 호출한다")
+        void narrowsLimitWhenRiskFlagged() throws Exception {
+            UserRateLimitFilterFunction riskAwareFilter = new UserRateLimitFilterFunction(
+                    redisTemplate, "ratelimit:ticket-hold:user:", WINDOW_SECONDS, MAX_REQUESTS,
+                    "ticket:risk:", NARROWED_MAX_REQUESTS);
+            given(redisTemplate.opsForValue()).willReturn(valueOperations);
+            given(valueOperations.get("ticket:risk:777")).willReturn("1");
+            given(redisTemplate.<Long>execute(any(RedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
+                    .willReturn(1L);
+            ServerRequest request = serverRequestWithUserId("777");
+            CapturingHandler next = new CapturingHandler();
+
+            riskAwareFilter.filter(request, next::handle);
+
+            verify(redisTemplate).execute(any(RedisScript.class), anyList(),
+                    anyString(), anyString(), eq(String.valueOf(NARROWED_MAX_REQUESTS)), anyString());
+        }
+
+        @Test
+        @DisplayName("위험 신호가 없으면 기본 한도를 그대로 쓴다")
+        void usesDefaultLimitWhenNoRisk() throws Exception {
+            UserRateLimitFilterFunction riskAwareFilter = new UserRateLimitFilterFunction(
+                    redisTemplate, "ratelimit:ticket-hold:user:", WINDOW_SECONDS, MAX_REQUESTS,
+                    "ticket:risk:", NARROWED_MAX_REQUESTS);
+            given(redisTemplate.opsForValue()).willReturn(valueOperations);
+            given(valueOperations.get("ticket:risk:777")).willReturn(null);
+            given(redisTemplate.<Long>execute(any(RedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
+                    .willReturn(1L);
+            ServerRequest request = serverRequestWithUserId("777");
+            CapturingHandler next = new CapturingHandler();
+
+            riskAwareFilter.filter(request, next::handle);
+
+            verify(redisTemplate).execute(any(RedisScript.class), anyList(),
+                    anyString(), anyString(), eq(String.valueOf(MAX_REQUESTS)), anyString());
+        }
+
+        @Test
+        @DisplayName("위험 신호 조회 자체가 실패해도 기본 한도로 fail-open한다")
+        void fallsBackToDefaultLimitOnRiskLookupFailure() throws Exception {
+            UserRateLimitFilterFunction riskAwareFilter = new UserRateLimitFilterFunction(
+                    redisTemplate, "ratelimit:ticket-hold:user:", WINDOW_SECONDS, MAX_REQUESTS,
+                    "ticket:risk:", NARROWED_MAX_REQUESTS);
+            given(redisTemplate.opsForValue()).willThrow(new RedisConnectionFailureException("연결 실패"));
+            given(redisTemplate.<Long>execute(any(RedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
+                    .willReturn(1L);
+            ServerRequest request = serverRequestWithUserId("777");
+            CapturingHandler next = new CapturingHandler();
+
+            riskAwareFilter.filter(request, next::handle);
+
+            verify(redisTemplate).execute(any(RedisScript.class), anyList(),
+                    anyString(), anyString(), eq(String.valueOf(MAX_REQUESTS)), anyString());
         }
     }
 }

@@ -30,6 +30,12 @@ import tools.jackson.databind.json.JsonMapper;
  * 정합성이 핵심인 대기열 도메인 로직과 달리 이 rate limit은 매크로 방지용 부가 기능이므로,
  * Redis 장애 시에는 제한을 걸지 않고 요청을 통과시키는 fail-open으로 처리한다
  * (Redis가 죽었다고 해서 standby 신청/취소 자체가 막혀버리면 안 됨).
+ * <p>
+ * riskKeyPrefix가 주어지면(옵션), 매 호출마다 performance-service가 별도로 채워둔 위험 신호
+ * (예: {@code ticket:risk:} - "공연 조회 -> 좌석 hold" 반응속도/CV 기반 매크로 의심 표시)를 조회해서,
+ * 신호가 있으면 이번 호출의 허용치를 narrowedMaxRequests로 좁힌다. 즉시 차단이 아니라 허용치 축소만
+ * 하고, 위험 신호 자체가 TTL로 자연 소멸하므로 영구 불이익은 없다. 이 조회도 실패하면 기본 허용치로
+ * fail-open.
  */
 public class UserRateLimitFilterFunction implements HandlerFilterFunction<ServerResponse, ServerResponse> {
 
@@ -55,13 +61,23 @@ public class UserRateLimitFilterFunction implements HandlerFilterFunction<Server
     private final String keyPrefix;
     private final long windowMillis;
     private final int maxRequests;
+    private final String riskKeyPrefix;
+    private final int narrowedMaxRequests;
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     public UserRateLimitFilterFunction(StringRedisTemplate redisTemplate, String keyPrefix, int windowSeconds, int maxRequests) {
+        this(redisTemplate, keyPrefix, windowSeconds, maxRequests, null, maxRequests);
+    }
+
+    public UserRateLimitFilterFunction(
+            StringRedisTemplate redisTemplate, String keyPrefix, int windowSeconds, int maxRequests,
+            String riskKeyPrefix, int narrowedMaxRequests) {
         this.redisTemplate = redisTemplate;
         this.keyPrefix = keyPrefix;
         this.windowMillis = windowSeconds * 1000L;
         this.maxRequests = maxRequests;
+        this.riskKeyPrefix = riskKeyPrefix;
+        this.narrowedMaxRequests = narrowedMaxRequests;
         this.slidingWindowLogScript = new DefaultRedisScript<>(SLIDING_WINDOW_LOG_SCRIPT, Long.class);
     }
 
@@ -85,13 +101,28 @@ public class UserRateLimitFilterFunction implements HandlerFilterFunction<Server
         String key = keyPrefix + userId;
         long now = System.currentTimeMillis();
         String member = now + "-" + UUID.randomUUID();
+        int effectiveLimit = resolveEffectiveLimit(userId);
 
         try {
             return redisTemplate.execute(slidingWindowLogScript, List.of(key),
-                    String.valueOf(now), String.valueOf(windowMillis), String.valueOf(maxRequests), member);
+                    String.valueOf(now), String.valueOf(windowMillis), String.valueOf(effectiveLimit), member);
         } catch (Exception e) {
             log.warn("유저 단위 rate limit용 Redis 호출 실패 - fail-open으로 통과시킴 (userId={})", userId, e);
             return null;
+        }
+    }
+
+    /** riskKeyPrefix가 설정 안 됐으면(옵션 미사용) 항상 기본 한도. 위험 신호 조회 자체도 실패하면 기본 한도로 fail-open. */
+    private int resolveEffectiveLimit(String userId) {
+        if (riskKeyPrefix == null) {
+            return maxRequests;
+        }
+        try {
+            String risk = redisTemplate.opsForValue().get(riskKeyPrefix + userId);
+            return risk != null ? narrowedMaxRequests : maxRequests;
+        } catch (Exception e) {
+            log.warn("위험 신호 조회 실패 - 기본 한도로 fail-open (userId={})", userId, e);
+            return maxRequests;
         }
     }
 
